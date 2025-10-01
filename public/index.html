@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SIPAKAR LUWORO</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin:20px; }
+    .hidden { display:none; }
+    table, th, td { border:1px solid #000; border-collapse: collapse; padding:5px; }
+    #login, #dashboard { max-width:600px; margin:auto; }
+    input, button, select { margin:5px; padding:5px; }
+  </style>
+</head>
+<body>
+  <h1>SIPAKAR LUWORO</h1>
+
+  <div id="login">
+    <h2>Login</h2>
+    <input id="username" placeholder="Username"><br>
+    <input id="password" placeholder="Password" type="password"><br>
+    <button onclick="login()">Login</button>
+    <p id="loginStatus"></p>
+  </div>
+
+  <div id="dashboard" class="hidden">
+    <h2 id="welcome"></h2>
+    <div id="staffActions" class="hidden">
+      <h3>Staff Menu</h3>
+      <button onclick="checkIn()">Check-In</button>
+      <button onclick="checkOut()">Check-Out</button><br>
+      <textarea id="notes" placeholder="Daily report..."></textarea><br>
+      <input id="photo" type="text" placeholder="Photo URL"><br>
+      <button onclick="submitReport()">Submit Report</button>
+      <h4>My Attendance</h4>
+      <table id="myAttendance"></table>
+      <h4>My Reports</h4>
+      <table id="myReports"></table>
+    </div>
+
+    <div id="adminActions" class="hidden">
+      <h3>Admin Menu</h3>
+      <label>Filter by Month:</label>
+      <input type="month" id="filterMonth" onchange="loadAdminData()"><br>
+      <button onclick="exportExcel()">Download Excel</button>
+      <button onclick="exportPDF()">Download PDF</button>
+      <h4>All Attendance</h4>
+      <table id="allAttendance"></table>
+      <h4>All Reports</h4>
+      <table id="allReports"></table>
+    </div>
+
+    <button onclick="logout()">Logout</button>
+  </div>
+
+  <script>
+    let token = null;
+    let role = null;
+
+    async function login(){
+      const res = await fetch('/api/login', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({username:username.value, password:password.value})
+      });
+      const data = await res.json();
+      if(data.token){
+        token = data.token; role = data.role;
+        loginStatus.innerText = 'Login success';
+        login.classList.add('hidden');
+        dashboard.classList.remove('hidden');
+        welcome.innerText = "Welcome " + data.name + " ("+data.role+")";
+        if(role==='staff'){ staffActions.classList.remove('hidden'); loadStaffData(); }
+        if(role==='admin'){ adminActions.classList.remove('hidden'); loadAdminData(); }
+      } else {
+        loginStatus.innerText = 'Login failed';
+      }
+    }
+
+    function logout(){
+      token=null; role=null;
+      login.classList.remove('hidden');
+      dashboard.classList.add('hidden');
+      staffActions.classList.add('hidden');
+      adminActions.classList.add('hidden');
+    }
+
+    async function checkIn(){
+      const pos = await getLocation();
+      await fetch('/api/checkin',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(pos)});
+      loadStaffData();
+    }
+
+    async function checkOut(){
+      const pos = await getLocation();
+      await fetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(pos)});
+      loadStaffData();
+    }
+
+    async function submitReport(){
+      await fetch('/api/report',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({notes:notes.value, photoUrl:photo.value})});
+      notes.value=''; photo.value='';
+      loadStaffData();
+    }
+
+    async function loadStaffData(){
+      const att = await fetch('/api/myAttendance',{headers:{'Authorization':'Bearer '+token}}).then(r=>r.json());
+      myAttendance.innerHTML='<tr><th>Date</th><th>In</th><th>Out</th></tr>'+att.map(a=>`<tr><td>${a.date}</td><td>${a.checkIn||''}</td><td>${a.checkOut||''}</td></tr>`).join('');
+      const rep = await fetch('/api/myReports',{headers:{'Authorization':'Bearer '+token}}).then(r=>r.json());
+      myReports.innerHTML='<tr><th>Date</th><th>Notes</th><th>Photo</th></tr>'+rep.map(r=>`<tr><td>${r.date}</td><td>${r.notes}</td><td><a href="${r.photoUrl}" target="_blank">Photo</a></td></tr>`).join('');
+    }
+
+    async function loadAdminData(){
+      const month=document.getElementById('filterMonth').value;
+      const att = await fetch('/api/allAttendance'+(month?`?month=${month}`:''),{headers:{'Authorization':'Bearer '+token}}).then(r=>r.json());
+      allAttendance.innerHTML='<tr><th>Name</th><th>Date</th><th>In</th><th>InLoc</th><th>Out</th><th>OutLoc</th></tr>'+att.map(a=>`<tr><td>${a.name}</td><td>${a.date}</td><td>${a.checkIn||''}</td><td>${a.checkInLoc||''}</td><td>${a.checkOut||''}</td><td>${a.checkOutLoc||''}</td></tr>`).join('');
+      const rep = await fetch('/api/allReports'+(month?`?month=${month}`:''),{headers:{'Authorization':'Bearer '+token}}).then(r=>r.json());
+      allReports.innerHTML='<tr><th>Name</th><th>Date</th><th>Notes</th><th>Photo</th></tr>'+rep.map(r=>`<tr><td>${r.name}</td><td>${r.date}</td><td>${r.notes}</td><td><a href="${r.photoUrl}" target="_blank">Photo</a></td></tr>`).join('');
+    }
+
+    function exportExcel(){
+      const month=filterMonth.value;
+      window.open('/api/export/excel?token='+token+(month?`&month=${month}`:''),'_blank');
+    }
+    function exportPDF(){
+      const month=filterMonth.value;
+      window.open('/api/export/pdf?token='+token+(month?`&month=${month}`:''),'_blank');
+    }
+
+    function getLocation(){
+      return new Promise(res=>{
+        if(navigator.geolocation){
+          navigator.geolocation.getCurrentPosition(pos=>res({lat:pos.coords.latitude, lng:pos.coords.longitude}),()=>res({lat:0,lng:0}));
+        } else res({lat:0,lng:0});
+      });
+    }
+  </script>
+</body>
+</html>
